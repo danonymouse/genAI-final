@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+# raw corpora are big and downloaded on demand; only the built assets are committed
+corpora/
+*.ipynb_checkpoints
+.DS_Store

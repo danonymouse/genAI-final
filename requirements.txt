@@ -1,0 +1,9 @@
+# Runtime dependencies (what the Docker image installs).
+fastapi==0.163.1
+uvicorn==0.54.0
+pydantic==2.14.3
+anthropic==2.9.0
+kiwipiepy==0.24.1
+jieba==0.42.1
+# jieba imports pkg_resources, which newer setuptools drops
+setuptools<81
