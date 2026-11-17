@@ -1,4 +1,4 @@
-# Pragmatic Gap Detector
+# genAI-final: Pragmatic Gap Detector
 
 APANS5560 Applied Generative AI, final project. David Lai, Yunji Park.
 
@@ -7,10 +7,10 @@ A learner watching a Korean vlog hears **아니 진짜** and reads "No, really" 
 ## Run it (Docker)
 
 ```bash
-docker build -t pragmatic-gap .
-docker run --rm -p 8000:8000 pragmatic-gap
+docker build -t genai-final .          # Docker image names must be lowercase
+docker run --rm -p 8000:8000 genai-final
 # optional, for live explanations from Claude:
-docker run --rm -p 8000:8000 -e ANTHROPIC_API_KEY=sk-ant-... pragmatic-gap
+docker run --rm -p 8000:8000 -e ANTHROPIC_API_KEY=sk-ant-... genai-final
 ```
 
 Then open http://localhost:8000 for the web page, or http://localhost:8000/docs for the API.

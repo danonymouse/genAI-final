@@ -1,5 +1,5 @@
 # Built for linux/amd64 so it runs on the graders' (non-Apple-silicon) machines.
-# On an Apple-silicon Mac, build with:  docker build --platform linux/amd64 -t pragmatic-gap .
+# On an Apple-silicon Mac, build with:  docker build --platform linux/amd64 -t genai-final .
 FROM --platform=linux/amd64 python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
