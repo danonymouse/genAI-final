@@ -1,11 +1,15 @@
-from types import SimpleNamespace
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.detector import ContrastTable, Detector, ngram_keys, segment
+from app.explain import parse_items
 from app.lexicon import load_lexicon
+from app.llm import LLMError, OpenAICompatClient, extract_json
 from app.pipeline import Pipeline
 from app.retrieval import dice
 
@@ -15,7 +19,7 @@ def settings(tmp_path_factory):
     import dataclasses
 
     # no key: tests never hit the network
-    return dataclasses.replace(Settings.from_env(), anthropic_api_key=None, explain_mode="auto")
+    return dataclasses.replace(Settings.from_env(), llm_base_url=None, explain_mode="auto")
 
 
 @pytest.fixture(scope="module")
@@ -87,32 +91,97 @@ def test_offline_lexicon_explanations(settings):
     assert s.explanation.literal and s.explanation.function
 
 
-def test_claude_rejection_marks_uncertain(settings, monkeypatch):
-    """If Claude says the entries don't fit the context, the span becomes uncertain."""
+class FakeLLM:
+    def __init__(self, reply=None, exc=None):
+        self.reply, self.exc, self.calls = reply, exc, 0
+
+    def complete_json(self, system, user, max_tokens=2000):
+        self.calls += 1
+        if self.exc:
+            raise self.exc
+        return self.reply
+
+
+def test_llm_rejection_marks_uncertain(settings, monkeypatch):
+    """If the LLM says the entries don't fit the context, the span becomes uncertain."""
     p = Pipeline(settings)
-    ex = p.langs["ko"].explainer
-    monkeypatch.setattr(ex, "api_key", "test")
-    fake = SimpleNamespace(content=[SimpleNamespace(type="tool_use", input={"items": [
-        {"span_index": 0, "fits_context": False}]})])
-    monkeypatch.setattr(ex, "_client", SimpleNamespace(messages=SimpleNamespace(create=lambda **kw: fake)))
+    monkeypatch.setattr(p.langs["ko"].explainer, "llm",
+                        FakeLLM({"items": [{"span_index": 0, "fits_context": False}]}))
     r = p.analyze("ko", ["헐, 이 케이크 좀 보세요."])
     s = r.lines[0].spans[0]
     assert s.status == "uncertain" and s.explanation_source == "live"
     assert r.meta.mode == "live"
 
 
-def test_api_failure_falls_back(settings, monkeypatch):
+def test_llm_explanation_is_used_and_cached(settings, monkeypatch):
     p = Pipeline(settings)
     ex = p.langs["ko"].explainer
-    monkeypatch.setattr(ex, "api_key", "test")
+    item = {"span_index": 0, "fits_context": True, "literal": "L", "function": "F",
+            "why_mt_misses": "W", "register": "R", "textbook_equivalent": "T"}
+    monkeypatch.setattr(ex, "llm", FakeLLM({"items": [item]}))
+    monkeypatch.setattr(ex, "cache", {})
+    r = p.analyze("ko", ["헐, 이 케이크 좀 보세요."])
+    s = r.lines[0].spans[0]
+    assert s.status == "explained" and s.explanation.function == "F" and s.explanation_source == "live"
+    assert len(ex.cache) == 1
+    # same line again with the LLM gone -> served from cache
+    monkeypatch.setattr(ex, "llm", None)
+    s2 = p.analyze("ko", ["헐, 이 케이크 좀 보세요."]).lines[0].spans[0]
+    assert s2.explanation_source == "cache" and s2.explanation.function == "F"
 
-    def boom(**kw):
-        raise RuntimeError("no network")
 
-    monkeypatch.setattr(ex, "_client", SimpleNamespace(messages=SimpleNamespace(create=boom)))
+def test_llm_failure_falls_back(settings, monkeypatch):
+    p = Pipeline(settings)
+    monkeypatch.setattr(p.langs["ko"].explainer, "llm", FakeLLM(exc=RuntimeError("no network")))
     r = p.analyze("ko", ["헐, 이 케이크 좀 보세요."])
     assert r.lines[0].spans[0].status == "explained"
     assert r.meta.warnings and r.meta.mode in ("offline", "cache")
+
+
+def test_malformed_items_fall_back_per_span():
+    out = parse_items({"items": [{"span_index": 0, "function": ""}, {"span_index": "1", "function": "ok"},
+                                 "junk", {"span_index": 9, "function": "x"}]}, 2)
+    assert out[0] is None and out[1].explanation.function == "ok"
+    assert parse_items({"nope": 1}, 2) == [None, None]
+
+
+def test_extract_json_is_lenient():
+    assert extract_json('{"items": []}') == {"items": []}
+    assert extract_json('<think>hmm {not json}</think>\n```json\n{"items": [1]}\n```') == {"items": [1]}
+    assert extract_json('Sure! Here you go: {"a": "b}"} hope that helps') == {"a": "b}"}
+    with pytest.raises(LLMError):
+        extract_json("no json here")
+
+
+def test_openai_compatible_client_over_http():
+    """Real HTTP round trip against a fake server that rejects JSON mode and 'thinks' first."""
+    seen = []
+
+    class H(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            seen.append(body)
+            if "response_format" in body:
+                self.send_response(400); self.end_headers(); self.wfile.write(b"no json mode"); return
+            content = '<think>reasoning...</think>{"items": [{"span_index": 0, "function": "ok"}]}'
+            out = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json")
+            self.end_headers(); self.wfile.write(out)
+
+        def log_message(self, *a):
+            pass
+
+    srv = HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        c = OpenAICompatClient(f"http://127.0.0.1:{srv.server_port}/v1", "qwen3.5:9b")
+        assert c.complete_json("sys", "user") == {"items": [{"span_index": 0, "function": "ok"}]}
+        assert c.complete_json("sys", "user")["items"][0]["function"] == "ok"
+        # first call tried JSON mode then retried without; second call skips JSON mode
+        assert ["response_format" in b for b in seen] == [True, False, False]
+        assert seen[0]["model"] == "qwen3.5:9b" and seen[0]["temperature"] == 0
+    finally:
+        srv.shutdown()
 
 
 # --------------------------------------------------------------------------- API
@@ -127,7 +196,7 @@ def client(monkeypatch_module):
 @pytest.fixture(scope="module")
 def monkeypatch_module():
     mp = pytest.MonkeyPatch()
-    mp.delenv("ANTHROPIC_API_KEY", raising=False)
+    mp.delenv("LLM_BASE_URL", raising=False)
     yield mp
     mp.undo()
 

@@ -9,13 +9,15 @@ A learner watching a Korean vlog hears **아니 진짜** and reads "No, really" 
 ```bash
 docker build -t genai-final .          # Docker image names must be lowercase
 docker run --rm -p 8000:8000 genai-final
-# optional, for live explanations from Claude:
-docker run --rm -p 8000:8000 -e ANTHROPIC_API_KEY=sk-ant-... genai-final
+# optional, live explanations from a local open model (free), e.g. Ollama on the host:
+#   ollama pull qwen3.5:9b
+docker run --rm -p 8000:8000 --add-host=host.docker.internal:host-gateway \
+  -e LLM_BASE_URL=http://host.docker.internal:11434/v1 genai-final
 ```
 
 Then open http://localhost:8000 for the web page, or http://localhost:8000/docs for the API.
 
-No API key is needed. Without one, explanations come from the pre-generated cache, or directly from the lexicon entry. Nothing is downloaded at run time.
+No API key and no LLM are needed. The explanations were generated ahead of time by an open model (Qwen3.5-9B) on Colab's free GPU and ship inside the image as a cache. Input that was never cached gets the lexicon entry itself. Nothing is downloaded at run time.
 
 ```bash
 curl -s localhost:8000/health
@@ -50,12 +52,12 @@ Each span in the response:
 | 1 Split | `app/detector.py` | Segments the line (kiwipiepy for Korean, jieba for Mandarin) into candidate n-grams with character offsets |
 | 2 Score | `app/detector.py` | Flags spans that match a lexicon form, or whose **contrast score** `log((f_speech+1)/(f_formal+1))` (per million tokens) exceeds `CONTRAST_THRESHOLD` |
 | 3 Retrieve | `app/retrieval.py` | Finds the lexicon entries closest to the span. Below `RETRIEVAL_THRESHOLD` → **uncertain**, no LLM call |
-| 4 Explain | `app/explain.py` | Claude explains the span from the retrieved entries (structured tool output, one call per line). Claude can also reject the entries as not fitting the context → uncertain |
+| 4 Explain | `app/explain.py`, `app/llm.py` | An open LLM (Qwen3.5-9B by default, any OpenAI-compatible server) explains the span from the retrieved entries as JSON, one call per line. It can also reject the entries as not fitting the context → uncertain |
 | 5 Show | `app/static/index.html` | Highlights plus expandable cards |
 
 Stage 2 hands stage 3 a `FlaggedSpan` (`app/schemas.py`). Its `type` is provisional: a contrast-only flag says *how unusual* a span is, not *what kind*, so stage 3 fills `type` from the best match.
 
-Explanation sources, in order (`EXPLAIN_MODE=auto`): **live** Claude if `ANTHROPIC_API_KEY` is set → **cache** (`data/cache/{lang}.json`, built by `scripts/generate_cache.py`) → **lexicon** entry fields with no LLM. If the API call fails, the request falls back to the next source and says so in `meta.warnings`.
+Explanation sources, in order (`EXPLAIN_MODE=auto`): **live** LLM if `LLM_BASE_URL` is set → **cache** (`data/cache/{lang}.json`, built by `scripts/generate_cache.py`) → **lexicon** entry fields with no LLM. If the API call fails, the request falls back to the next source and says so in `meta.warnings`.
 
 ## Offline assets
 
@@ -70,8 +72,10 @@ The corpus is counted, never embedded, which keeps the image small. Raw corpora 
 
 | Variable | Default | |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | unset | Enables live explanations |
-| `CLAUDE_MODEL` | `claude-sonnet-5-5` | |
+| `LLM_BASE_URL` | unset | Any OpenAI-compatible endpoint, e.g. `http://localhost:11434/v1` (Ollama). Enables live explanations |
+| `LLM_MODEL` | `qwen3.5:9b` | Model name as the server knows it |
+| `LLM_API_KEY` | unset | Only for hosted endpoints; local servers need none |
+| `LLM_TIMEOUT` | `120` | Seconds per call |
 | `EXPLAIN_MODE` | `auto` | `auto`, `live`, `cache`, `offline` |
 | `RETRIEVAL_THRESHOLD` | `0.6` | Below this similarity a span is uncertain |
 | `CONTRAST_THRESHOLD` | `2.0` | Contrast score needed to flag a span |
@@ -88,10 +92,11 @@ uvicorn app.api:app --reload
 ## Layout
 
 ```
-app/        schemas.py · config.py · lexicon.py · detector.py · retrieval.py · explain.py · pipeline.py · api.py · static/
+app/        schemas.py · config.py · lexicon.py · detector.py · retrieval.py · explain.py · llm.py · pipeline.py · api.py · static/
 data/       lexicon/{ko,zh}.jsonl · examples/ · cache/ · assets/
 scripts/    build_assets.py · generate_cache.py · smoke.sh
 tests/
+docs/       decision_log.md
 ```
 
 ## Data and attribution
@@ -100,4 +105,4 @@ Subtitle corpus: OPUS OpenSubtitles (http://opus.nlpl.eu/OpenSubtitles.php), fro
 
 ## Status
 
-M1 (plumbing) is complete: both languages run end to end through the lexicon detector, keyword retriever and three-source explainer. The next milestone (M2) adds the real frequency tables, the FAISS retriever, the full lexicons and the evaluation script.
+M1 is complete. Both languages run end to end through the lexicon detector, the keyword retriever and the three-source explainer (live open LLM → cache → lexicon). M2 adds the real frequency tables, the FAISS retriever with ONNX embeddings, the full lexicons and the evaluation script. Key decisions are in `docs/decision_log.md`.

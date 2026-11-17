@@ -1,7 +1,9 @@
-"""Pre-generate Claude explanations so the container works with no API key (decision D4).
+"""Pre-generate LLM explanations so the container needs no LLM at all (decision D4).
 
-    ANTHROPIC_API_KEY=sk-... python scripts/generate_cache.py                # all data/examples/*.txt
-    ANTHROPIC_API_KEY=sk-... python scripts/generate_cache.py clips/ko_01.txt
+Run where the model is served, normally a Colab notebook with Ollama on the free GPU:
+
+    LLM_BASE_URL=http://localhost:11434/v1 python scripts/generate_cache.py              # data/examples/*.txt
+    LLM_BASE_URL=http://localhost:11434/v1 python scripts/generate_cache.py clips/ko_01.txt
 
 Runs the full pipeline in live mode and writes data/cache/{lang}.json. The file name
 prefix (ko_..., zh_...) sets the language. Commit the cache files; the Docker image
@@ -21,8 +23,8 @@ from app.pipeline import Pipeline  # noqa: E402
 
 
 def main() -> None:
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        raise SystemExit("Set ANTHROPIC_API_KEY first.")
+    if not os.getenv("LLM_BASE_URL"):
+        raise SystemExit("Set LLM_BASE_URL first (e.g. http://localhost:11434/v1 for Ollama).")
     os.environ["EXPLAIN_MODE"] = "live"
     settings = Settings.from_env()
     files = [Path(a) for a in sys.argv[1:]] or sorted(settings.examples_dir.glob("*.txt"))

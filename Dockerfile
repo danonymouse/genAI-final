@@ -23,5 +23,6 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
 
-# ANTHROPIC_API_KEY is optional. Without it, /analyze serves cached or lexicon explanations.
+# No LLM needed: /analyze serves cached or lexicon explanations. To generate live, point
+# LLM_BASE_URL at any OpenAI-compatible server (e.g. Ollama), see README.
 CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]

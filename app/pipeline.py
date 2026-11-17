@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .config import Settings
 from .detector import ContrastTable, Detector
 from .explain import Explainer, SpanJob
+from .llm import OpenAICompatClient
 from .lexicon import load_lexicon
 from .retrieval import KeywordRetriever, Retriever
 from .schemas import AnalyzedLine, AnalyzedSpan, AnalyzeResponse, Lang, LexiconEntry, Meta
@@ -26,6 +27,8 @@ class Pipeline:
     def __init__(self, settings: Settings | None = None):
         self.settings = s = settings or Settings.from_env()
         self.langs: dict[Lang, LangComponents] = {}
+        llm = (OpenAICompatClient(s.llm_base_url, s.llm_model, s.llm_api_key, s.llm_timeout)
+               if s.live_enabled and s.llm_base_url else None)
         for lang in LANGS:
             lex = load_lexicon(s.lexicon_dir / f"{lang}.jsonl")
             table = ContrastTable.load(s.assets_dir / f"{lang}_freq.json.gz")
@@ -36,9 +39,8 @@ class Pipeline:
                 explainer=Explainer(
                     lang=lang,
                     cache_path=s.cache_dir / f"{lang}.json",
-                    api_key=s.anthropic_api_key,
-                    model=s.claude_model,
-                    mode=s.explain_mode,
+                    llm=llm,
+                    use_cache=s.explain_mode in ("auto", "cache"),
                 ),
             )
 
@@ -98,7 +100,7 @@ class Pipeline:
             lines=out_lines,
             meta=Meta(
                 mode=mode,
-                model=self.settings.claude_model if mode == "live" else None,
+                model=self.settings.llm_model if mode == "live" else None,
                 detector=c.detector.name,
                 retriever=c.retriever.name,
                 retrieval_threshold=thr,

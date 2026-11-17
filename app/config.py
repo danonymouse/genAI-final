@@ -11,9 +11,12 @@ ROOT = Path(__file__).resolve().parent.parent
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
-    anthropic_api_key: str | None
-    claude_model: str
-    # auto: live if a key is set, else cache, else lexicon. live/cache/offline force one path.
+    # Any OpenAI-compatible chat endpoint (Ollama, vLLM, a hosted free tier). Unset = no live LLM.
+    llm_base_url: str | None
+    llm_api_key: str | None  # most local servers need none
+    llm_model: str
+    llm_timeout: float
+    # auto: live if LLM_BASE_URL is set, else cache, else lexicon. live/cache/offline force one path.
     explain_mode: str
     retrieval_threshold: float  # below this, a span comes back uncertain
     contrast_threshold: float  # contrast score above this flags a span (only when a table exists)
@@ -34,12 +37,18 @@ class Settings:
     def examples_dir(self) -> Path:
         return self.data_dir / "examples"
 
+    @property
+    def live_enabled(self) -> bool:
+        return bool(self.llm_base_url) and self.explain_mode in ("auto", "live")
+
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
             data_dir=Path(os.getenv("DATA_DIR", ROOT / "data")),
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
-            claude_model=os.getenv("CLAUDE_MODEL", "claude-sonnet-5-5"),
+            llm_base_url=os.getenv("LLM_BASE_URL") or None,
+            llm_api_key=os.getenv("LLM_API_KEY") or None,
+            llm_model=os.getenv("LLM_MODEL", "qwen3.5:9b"),
+            llm_timeout=float(os.getenv("LLM_TIMEOUT", "120")),
             explain_mode=os.getenv("EXPLAIN_MODE", "auto").lower(),
             retrieval_threshold=float(os.getenv("RETRIEVAL_THRESHOLD", "0.6")),
             contrast_threshold=float(os.getenv("CONTRAST_THRESHOLD", "2.0")),
