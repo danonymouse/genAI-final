@@ -27,7 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.detector import ngram_keys, segment  # noqa: E402
+from app.detector import KEY_VERSION, ngram_keys, segment  # noqa: E402
 
 
 def stream(path: Path, max_lines: int):
@@ -60,6 +60,13 @@ def count(path: Path, lang: str, max_lines: int, only: set[str] | None = None) -
     return counts, tokens_total
 
 
+def _source(path: str) -> dict:
+    """Provenance written by fetch_corpora.py next to the corpus file, if present."""
+    meta = Path(path).with_suffix(".source.json")
+    info = json.loads(meta.read_text(encoding="utf-8")) if meta.exists() else {}
+    return {"file": Path(path).name, **info}
+
+
 def build_freq(args) -> None:
     out = Path(args.out or ROOT / "data" / "assets" / f"{args.lang}_freq.json.gz")
     print(f"[speech] {args.speech}")
@@ -72,11 +79,12 @@ def build_freq(args) -> None:
 
     table = {
         "lang": args.lang,
+        "key_version": KEY_VERSION,
         "speech_total": speech_total,
         "formal_total": formal_total,
         "min_count": args.min_count,
         "max_lines": args.max_lines,
-        "sources": {"speech": Path(args.speech).name, "formal": Path(args.formal).name},
+        "sources": {"speech": _source(args.speech), "formal": _source(args.formal)},
         "counts": {k: [speech[k], formal.get(k, 0)] for k in sorted(keep)},
     }
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -27,6 +27,8 @@ from .schemas import FlaggedSpan, Lang, LexiconEntry
 log = logging.getLogger(__name__)
 
 MAX_N = 3  # longest candidate n-gram, in tokens
+# Bump whenever segmentation or ngram_keys changes: tables built with another version are rejected.
+KEY_VERSION = 2
 
 # Characters after which a span counts as sentence-initial.
 _BOUNDARY = set(".?!…。？！,，、~～\"'“”‘’()[]「」『』-—:;：；")
@@ -74,12 +76,18 @@ def segment(text: str, lang: Lang) -> list[Token]:
 
 
 _PUNCT_RE = re.compile(r"^[\W\d_]+$", re.UNICODE)
-# Korean tags that carry content. N*: nouns, V*: verbs/adjectives, M*: adverbs/determiners,
-# IC: interjections, XR: roots, SL: foreign letters. Skip n-grams of pure particles/endings.
-_KO_CONTENT = ("NN", "NP", "NR", "VV", "VA", "MA", "MM", "IC", "XR", "SL")
+# Korean tags that can start a candidate. NN*/NR: nouns and numerals, V*: verbs/adjectives,
+# M*: adverbs/determiners, IC: interjections, XR: roots, SL: foreign letters, XPN: noun prefixes
+# (Kiwi splits 대박 into 대/XPN + 박/NNG, and 개웃겨 starts with 개/XPN). Particles and endings
+# never start one, and neither do pronouns (NP: 내, 이거): far more frequent in speech than in
+# writing, but every learner already knows them.
+_KO_CONTENT = ("NN", "NR", "VV", "VA", "MA", "MM", "IC", "XR", "SL", "XPN")
+_JAMO_RE = re.compile(r"[\u3131-\u318e]")  # consonant abbreviations like ㄹㅇ, ㅇㅈ, ㅋㅋ (tagged SW)
 
 
 def _is_content(tok: Token, lang: Lang) -> bool:
+    if lang == "ko" and tok.tag == "SW":
+        return bool(_JAMO_RE.search(tok.form))
     if _PUNCT_RE.match(tok.form):
         return False
     if lang == "ko":
@@ -102,6 +110,10 @@ def ngram_keys(tokens: list[Token], lang: Lang, max_n: int = MAX_N):
             # must start on a content token (not a particle/ending) and not end on punctuation
             if not _is_content(window[0], lang) or _PUNCT_RE.match(window[-1].form):
                 continue
+            if n == 1 and window[0].tag == "XPN":  # a bare prefix is not a phrase
+                continue
+            if lang == "ko" and window[-1].tag.startswith(("J", "VCP")):  # don't end on a particle/copula
+                continue
             yield " ".join(t.form for t in window), i, j
 
 
@@ -122,6 +134,10 @@ class ContrastTable:
             return None
         with gzip.open(path, "rt", encoding="utf-8") as f:
             d = json.load(f)
+        if d.get("key_version") != KEY_VERSION:
+            log.warning("%s was built with key_version %s but the code uses %s; ignoring it. "
+                        "Rebuild with scripts/build_assets.py.", path, d.get("key_version"), KEY_VERSION)
+            return None
         return cls(d["counts"], d["speech_total"], d["formal_total"])
 
     def score(self, key: str) -> float | None:
@@ -214,15 +230,18 @@ class Detector:
         return round(s, 3) if s is not None else 0.0
 
 
-def _resolve_overlaps(spans: list[FlaggedSpan]) -> list[FlaggedSpan]:
-    """Keep the longest span among overlaps; merge `detected_by` from what it absorbs.
+def _rank(s: FlaggedSpan):
+    # Lexicon hits first (they carry a type), longest first, so "아니 진짜" beats "아니".
+    if "lexicon" in s.detected_by:
+        return (0, -(s.end - s.start), -s.score, s.start)
+    # Contrast-only: the most unusual n-gram wins, and on a tie the shorter one, so a flag
+    # does not swallow its neighbours ("존맛탱", not "이거 존맛탱").
+    return (1, -s.score, s.end - s.start, s.start)
 
-    Ties on length prefer lexicon hits (they carry a type), then higher score.
-    """
-    spans = sorted(
-        spans,
-        key=lambda s: (-(s.end - s.start), "lexicon" not in s.detected_by, -s.score, s.start),
-    )
+
+def _resolve_overlaps(spans: list[FlaggedSpan]) -> list[FlaggedSpan]:
+    """Keep one span per overlapping group (see _rank); merge `detected_by` from what it absorbs."""
+    spans = sorted(spans, key=_rank)
     kept: list[FlaggedSpan] = []
     for s in spans:
         clash = next((k for k in kept if s.start < k.end and k.start < s.end), None)

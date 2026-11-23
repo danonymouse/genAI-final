@@ -65,6 +65,20 @@ def test_contrast_flag_has_no_type_until_retrieval():
     assert spans[0].score == pytest.approx(5.525, abs=0.01)  # log(501/2)
 
 
+def test_korean_candidates_include_prefixed_nouns_and_jamo():
+    keys = {k for k, _, _ in ngram_keys(segment("대박이야 ㄹㅇ", "ko"), "ko")}
+    assert "대 박" in keys and "ㄹㅇ" in keys and "대" not in keys
+    assert not any(k.startswith(("이 ", "야")) for k in keys)  # never start on a particle/ending
+
+
+def test_stale_table_is_rejected(tmp_path):
+    import gzip as gz
+    p = tmp_path / "ko_freq.json.gz"
+    with gz.open(p, "wt", encoding="utf-8") as f:
+        json.dump({"key_version": -1, "counts": {}, "speech_total": 1, "formal_total": 1}, f)
+    assert ContrastTable.load(p) is None
+
+
 # --------------------------------------------------------------------------- stage 3
 def test_dice():
     assert dice("대박이야", "대박이야") == 1.0

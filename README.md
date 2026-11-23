@@ -66,7 +66,7 @@ The service reads two files per language, built once and committed:
 - `data/assets/{lang}_freq.json.gz`: n-gram → (speech count, formal count). Built by `scripts/build_assets.py freq` from a subtitle corpus and a formal corpus. The detector switches the contrast signal on automatically when this file exists.
 - `data/assets/{lang}_index.faiss`: embedding index of the lexicon (M2).
 
-The corpus is counted, never embedded, which keeps the image small. Raw corpora live in `corpora/` (git-ignored). Build the assets locally or in Colab and commit only the output.
+The corpus is counted, never embedded, which keeps the image small. Raw corpora live in `corpora/` (git-ignored). Build the assets on Colab with `notebooks/01_build_freq_tables.ipynb` (CPU runtime is enough). It runs `scripts/fetch_corpora.py` (streams OPUS OpenSubtitles and Wikipedia, capped), `scripts/build_assets.py freq`, and `scripts/inspect_freq.py`, which writes a sanity report to `reports/`. Commit only `data/assets/*` and `reports/`.
 
 ## Configuration
 
@@ -94,7 +94,8 @@ uvicorn app.api:app --reload
 ```
 app/        schemas.py · config.py · lexicon.py · detector.py · retrieval.py · explain.py · llm.py · pipeline.py · api.py · static/
 data/       lexicon/{ko,zh}.jsonl · examples/ · cache/ · assets/
-scripts/    build_assets.py · generate_cache.py · smoke.sh
+scripts/    fetch_corpora.py · build_assets.py · inspect_freq.py · generate_cache.py · smoke.sh
+notebooks/  01_build_freq_tables.ipynb (Colab)
 tests/
 docs/       decision_log.md
 ```

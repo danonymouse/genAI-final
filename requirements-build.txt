@@ -1,0 +1,4 @@
+# Extra packages for building assets (Colab). Not installed in the Docker image.
+-r requirements.txt
+datasets
+opencc-python-reimplemented

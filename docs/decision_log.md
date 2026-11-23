@@ -15,6 +15,8 @@ Decisions that shape the build. Read this before changing the stack. Newest firs
 | L7 | Base image `python:3.11-slim`, built for `linux/amd64`. | The graders' machine is probably not Apple silicon. | Nov 13 |
 | L8 | Segmenters: kiwipiepy (Korean) and jieba (Mandarin). Both install with pip and need no system packages. | konlpy/MeCab break Docker builds. HanLP pulls in a deep learning framework. | Nov 17 |
 | L9 | Six span types: slang, idiom, discourse_marker, register, non_literal, wordplay (D5). | | Nov 13 |
+| L11 | **Contrast candidates (Korean):** an n-gram must start on a content morpheme. Noun prefixes (대/XPN in 대박) and consonant abbreviations (ㄹㅇ) count; pronouns (내, 이거), particles and endings do not. It may not end on a particle or copula. Among overlapping contrast-only flags the highest score wins, shorter on ties; lexicon hits still win longest-first. Tables carry `key_version` and a mismatched table is ignored. | Found on synthetic data: 대박 was never a candidate, and flags swallowed neighbouring words. Pronouns are speech-heavy but not learning gaps. | Nov 23 |
+| L12 | Chinese text on both sides is converted to Simplified with OpenCC before counting. | Wikipedia mixes Traditional and Simplified; without conversion the contrast would partly measure script, not register. | Nov 23 |
 | L10 | Contrast score `log((f_speech + 1) / (f_formal + 1))`, per million tokens. N-grams are keyed by `app.detector.ngram_keys`, shared by the build and run-time code. | Smoothing avoids division by zero. One shared key function means counting and lookup cannot disagree. | Nov 17 |
 
 ## Open
@@ -22,7 +24,7 @@ Decisions that shape the build. Read this before changing the stack. Newest firs
 | # | Decision | Proposed |
 |---|---|---|
 | D1 | Who owns which stages | David: pipeline, Docker, Colab. Yunji: labels, deck. Confirm. |
-| D2 | Formal corpus for the contrast | Korean and Chinese Wikipedia, capped by line count, processed on Colab. |
+| D2 | Formal corpus for the contrast | Korean and Chinese Wikipedia (HF `wikimedia/wikipedia` 20231101), 500k sentences per language, on Colab. Revisit if the report shows Wikipedia skews the contrast (e.g. news would be a closer formal register). |
 | D9 | Which eight clips | Four per language, about 20 lines each. |
 | D10 | Lexicon per language | Korean: try 우리말샘 plus the HuggingFace slang set. Mandarin: hand-build about 150 entries. |
 | D11 | Which clips tune, which score | After D9, before anyone reads a label. |
