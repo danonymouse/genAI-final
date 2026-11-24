@@ -11,3 +11,4 @@ corpora/
 models/
 data/assets/*_index.faiss
 data/assets/*_index.json
+sheets/

@@ -45,3 +45,26 @@ class LearnerVocab:
         if not forms:
             return False
         return "".join(forms) in self.words or all(f in self.words for f in forms)
+
+
+class GeneralFreq:
+    """Broad word frequency (Zipf scale) from data/wordlists/{lang}_general.tsv (wordfreq)."""
+
+    def __init__(self, zipf: dict[str, float], source: str = ""):
+        self.zipf = zipf
+        self.source = source
+
+    @classmethod
+    def load(cls, path: Path) -> "GeneralFreq | None":
+        if not path.exists():
+            return None
+        z = {}
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                w, _, v = line.rstrip("\n").partition("\t")
+                if w and v:
+                    z[w] = float(v)
+        return cls(z, path.name)
+
+    def get(self, word: str) -> float:
+        return self.zipf.get(word, 0.0)  # absent = rarer than anything the list kept

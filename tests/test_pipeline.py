@@ -30,8 +30,28 @@ def ko_lex(settings):
 
 # --------------------------------------------------------------------------- lexicons
 def test_lexicons_load(settings):
-    assert len(load_lexicon(settings.lexicon_dir / "ko.jsonl")) == 20
-    assert len(load_lexicon(settings.lexicon_dir / "zh.jsonl")) >= 10
+    for lang in ("ko", "zh"):
+        lex = load_lexicon(settings.lexicon_dir / f"{lang}.jsonl")
+        assert len(lex) >= 50
+        assert all(e.id.startswith(lang) and e.lang == lang for e in lex)
+
+
+@pytest.mark.parametrize("lang", ["ko", "zh"])
+def test_every_entry_is_detected_in_its_own_example(settings, lang):
+    lex = load_lexicon(settings.lexicon_dir / f"{lang}.jsonl")
+    d = Detector(lang, lex)
+    missed = [e.headword for e in lex
+              if e.example and not any(s.surface in e.forms() for s in d.detect(e.example))]
+    assert missed == []
+
+
+def test_no_form_belongs_to_two_entries(settings):
+    for lang in ("ko", "zh"):
+        seen = {}
+        for e in load_lexicon(settings.lexicon_dir / f"{lang}.jsonl"):
+            for f in e.forms():
+                assert f not in seen, f"{f} in {seen.get(f)} and {e.id}"
+                seen[f] = e.id
 
 
 # --------------------------------------------------------------------------- stage 1
@@ -109,6 +129,7 @@ def test_dice():
 def test_uncertain_when_nothing_retrieved(settings, tmp_path):
     p = Pipeline(settings)
     p.langs["zh"].detector.table = ContrastTable({"蜘蛛侠": [500, 1]}, 10**6, 10**6)
+    p.langs["zh"].detector.signals.add("contrast")
     r = p.analyze("zh", ["蜘蛛侠是什么颜色的？"])
     span = r.lines[0].spans[0]
     assert span.surface == "蜘蛛侠" and span.status == "uncertain"
@@ -236,7 +257,7 @@ def monkeypatch_module():
 
 def test_api_health(client):
     r = client.get("/health").json()
-    assert r["status"] == "ok" and r["languages"]["ko"]["lexicon_entries"] == 20
+    assert r["status"] == "ok" and r["languages"]["ko"]["lexicon_entries"] >= 50
 
 
 def test_api_analyze_shape(client):
@@ -334,3 +355,34 @@ def test_pipeline_with_hybrid_retriever(settings, tmp_path):
     r = p.analyze("ko", ["아니 진짜 여기 분위기 대박이야."])
     assert r.meta.retriever == "hybrid" and [x.status for x in r.lines[0].spans] == ["explained", "explained"]
     assert (tmp_path / "assets" / "ko_index.faiss").exists()
+
+
+# --------------------------------------------------------------------------- novelty signal
+def _novelty_detector(lang, lex=()):
+    from app.vocab import GeneralFreq, LearnerVocab
+    root = Settings.from_env().wordlists_dir
+    return Detector(lang, list(lex), None, 2.0, None,
+                    LearnerVocab.load(root / f"{lang}_learner.tsv", 99), ("lexicon", "novelty"),
+                    GeneralFreq.load(root / f"{lang}_general.tsv"), {"ko": 3.0, "zh": 2.5}[lang])
+
+
+def test_novelty_flags_neologisms_not_standard_words():
+    d = _novelty_detector("ko")
+    flagged = {s.surface for s in d.detect("팀플 데이빗이 캐리 중인데 알잘딱깔센이라 넘나 고마운 맘ㅜㅜ 취뽀하면 고기나 때리러 가자")}
+    assert {"팀플", "알잘딱깔센", "취뽀"} <= flagged
+    assert "데이빗" not in flagged  # established (a name wordfreq knows)
+    flagged = {s.surface for s in d.detect("수포자한테 알고리즘 수업은 넘나 난이도 높은 것..그래도 중꺽마!")}
+    assert "중꺽마" in flagged and not {"알고리즘", "난이도"} & flagged
+    assert all(s.detected_by == ["novelty"] for s in d.detect("중꺽마!"))
+
+
+def test_novelty_ignores_everyday_lines_and_zh_standard_words():
+    assert _novelty_detector("ko").detect("안녕하세요 여러분, 오늘은 성수동에 있는 카페에 왔어요.") == []
+    zh = {s.surface for s in _novelty_detector("zh").detect("数学和算法都很难，今天我们去吃网红火锅")}
+    assert not {"数学", "算法", "网红"} & zh
+
+
+def test_novelty_yields_to_lexicon_on_overlap(ko_lex):
+    spans = _novelty_detector("ko", ko_lex).detect("와 이거 존맛탱이다 ㄹㅇ.")
+    hit = next(s for s in spans if s.surface == "존맛탱")
+    assert hit.type == "slang" and "lexicon" in hit.detected_by

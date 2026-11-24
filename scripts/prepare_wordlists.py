@@ -2,6 +2,7 @@
 
     python scripts/prepare_wordlists.py zh                       # HSK, downloaded from GitHub
     python scripts/prepare_wordlists.py ko path/to/list.txt      # NIKL list, downloaded by hand
+    python scripts/prepare_wordlists.py general                  # wordfreq ko/zh -> {lang}_general.tsv
 
 Mandarin: HSK 2.0 + 3.0 vocabulary, github.com/drkameleon/complete-hsk-vocabulary (MIT).
           A word's level is the lowest level it appears at in any syllabus (7 = HSK 7-9).
@@ -137,7 +138,33 @@ def build_ko(src: str) -> None:
                          "Levels A/B/C -> 1/2/3; verb/adjective stems and 하다-nouns added.")
 
 
+# --------------------------------------------------------------------------- general frequency
+GENERAL_MIN_ZIPF = {"ko": 0.0, "zh": 2.0}  # keep the files small; novelty thresholds sit above these
+
+
+def build_general() -> None:
+    """Broad word frequencies (Wikipedia, subtitles, news, books, web, social media; frozen 2021)
+    from the `wordfreq` package, read from its raw tables so Korean needs no MeCab."""
+    import math
+
+    from wordfreq import get_frequency_dict
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    for lang in ("ko", "zh"):
+        d = get_frequency_dict(lang)
+        rows = sorted(((w, round(math.log10(f * 1e9), 2)) for w, f in d.items() if f > 0), key=lambda x: -x[1])
+        rows = [(w, z) for w, z in rows if z >= GENERAL_MIN_ZIPF[lang] and "\t" not in w]
+        path = OUT / f"{lang}_general.tsv"
+        path.write_text("".join(f"{w}\t{z}\n" for w, z in rows), encoding="utf-8")
+        (OUT / f"{lang}_general.SOURCE.txt").write_text(
+            "wordfreq 3.x (Robyn Speer), https://github.com/rspeer/wordfreq. Data CC BY-SA 4.0. "
+            "Zipf frequency (log10 per billion words); entries frozen at 2021.\n", encoding="utf-8")
+        print(f"wrote {path}: {len(rows):,} words (zipf >= {GENERAL_MIN_ZIPF[lang]})")
+
+
 def main() -> None:
+    if len(sys.argv) >= 2 and sys.argv[1] == "general":
+        return build_general()
     if len(sys.argv) < 2 or sys.argv[1] not in ("ko", "zh"):
         raise SystemExit(__doc__)
     lang, src = sys.argv[1], (sys.argv[2] if len(sys.argv) > 2 else None)

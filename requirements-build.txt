@@ -2,3 +2,4 @@
 -r requirements.txt
 datasets
 opencc-python-reimplemented
+wordfreq

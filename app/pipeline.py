@@ -8,7 +8,7 @@ from .detector import ContrastTable, Detector
 from .explain import Explainer, SpanJob
 from .llm import OpenAICompatClient
 from .lexicon import load_lexicon
-from .vocab import LearnerVocab
+from .vocab import GeneralFreq, LearnerVocab
 from .retrieval import HybridRetriever, KeywordRetriever, Retriever
 from .schemas import AnalyzedLine, AnalyzedSpan, AnalyzeResponse, Lang, LexiconEntry, Meta
 
@@ -34,13 +34,20 @@ class Pipeline:
         embedder = self._embedder(s) if embedder is None else embedder
         for lang in LANGS:
             lex = load_lexicon(s.lexicon_dir / f"{lang}.jsonl")
-            table = vocab = None
-            if s.detector == "lexicon+contrast":
+            signals = tuple(x.strip() for x in s.detector.split("+") if x.strip())
+            table = vocab = novel_vocab = general = None
+            if "contrast" in signals:
                 table = ContrastTable.load(s.assets_dir / f"{lang}_freq.json.gz")
-                vocab = LearnerVocab.load(s.wordlists_dir / f"{lang}_learner.tsv", s.learner_level[lang])
+            wl = s.wordlists_dir / f"{lang}_learner.tsv"
+            if "contrast" in signals:
+                vocab = LearnerVocab.load(wl, s.learner_level[lang])
+            if "novelty" in signals:
+                novel_vocab = LearnerVocab.load(wl, max_level=99)  # every level: "in any list" = not novel
+                general = GeneralFreq.load(s.wordlists_dir / f"{lang}_general.tsv")
             self.langs[lang] = LangComponents(
                 lexicon=lex,
-                detector=Detector(lang, lex, table, s.contrast_threshold, vocab),
+                detector=Detector(lang, lex, table, s.contrast_threshold, vocab, novel_vocab,
+                                  signals, general, s.novelty_max_zipf[lang]),
                 retriever=(HybridRetriever(lex, embedder, s.assets_dir / f"{lang}_index",
                                            s.lexicon_dir / f"{lang}.jsonl", s.semantic_floor[lang])
                            if embedder is not None else KeywordRetriever(lex)),

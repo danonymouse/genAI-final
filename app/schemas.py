@@ -30,7 +30,7 @@ class FlaggedSpan(BaseModel):
     # type=None and stage 3 fills it from the best lexicon match.
     type: Optional[SpanType] = None
     score: float  # contrast score (smoothed log ratio); 1.0 for a lexicon hit when no table exists
-    detected_by: list[Literal["lexicon", "contrast"]] = Field(default_factory=list)
+    detected_by: list[Literal["lexicon", "contrast", "novelty"]] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -50,6 +50,9 @@ class LexiconEntry(BaseModel):
     position: Literal["any", "initial"] = "any"  # "initial" = only at the start of a sentence
     example: str = ""
     notes: str = ""
+    # Drafted entries start unverified; a native speaker sets this to true after checking.
+    verified: bool = False
+    source: str = ""  # where the entry came from (e.g. "draft", "contrast-survivor", "tina-sample")
 
     def forms(self) -> list[str]:
         seen, out = set(), []

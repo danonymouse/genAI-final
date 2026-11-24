@@ -1,0 +1,1 @@
+wordfreq 3.x (Robyn Speer), https://github.com/rspeer/wordfreq. Data CC BY-SA 4.0. Zipf frequency (log10 per billion words); entries frozen at 2021.

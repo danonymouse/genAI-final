@@ -19,12 +19,15 @@ class Settings:
     # auto: live if LLM_BASE_URL is set, else cache, else lexicon. live/cache/offline force one path.
     explain_mode: str
     retrieval_threshold: float  # below this, a span comes back uncertain
-    # "lexicon" or "lexicon+contrast". Contrast stays off until the tuning clips show it helps.
+    # Signals joined by "+": lexicon, contrast, novelty. Extra signals stay off until the
+    # tuning clips show they help.
     detector: str
+    novelty_max_zipf: dict  # per language: words at/above this wordfreq Zipf are established, not novel
     contrast_threshold: float  # contrast score needed to flag a span
     learner_level: dict  # {"ko": 3, "zh": 4}: contrast candidates known at this level are dropped
     retriever: str  # "auto" (hybrid if the embedding model is present, else keyword), "hybrid", "keyword"
     semantic_floor: dict  # per language: cosine mapped to similarity 0 in the hybrid retriever
+
     @property
     def lexicon_dir(self) -> Path:
         return self.data_dir / "lexicon"
@@ -60,9 +63,12 @@ class Settings:
             explain_mode=os.getenv("EXPLAIN_MODE", "auto").lower(),
             retrieval_threshold=float(os.getenv("RETRIEVAL_THRESHOLD", "0.6")),
             detector=os.getenv("DETECTOR", "lexicon").lower(),
+            novelty_max_zipf={"ko": float(os.getenv("NOVELTY_MAX_ZIPF_KO", "3.0")),
+                              "zh": float(os.getenv("NOVELTY_MAX_ZIPF_ZH", "2.5"))},
             contrast_threshold=float(os.getenv("CONTRAST_THRESHOLD", "2.0")),
             learner_level={"ko": int(os.getenv("LEARNER_LEVEL_KO", "3")),
                            "zh": int(os.getenv("LEARNER_LEVEL_ZH", "4"))},
             retriever=os.getenv("RETRIEVER", "auto").lower(),
             semantic_floor={"ko": float(os.getenv("SEMANTIC_FLOOR_KO", "0.75")),
-                            "zh": float(os.getenv("SEMANTIC_FLOOR_ZH", "0.5"))},        )
+                            "zh": float(os.getenv("SEMANTIC_FLOOR_ZH", "0.5"))},
+        )

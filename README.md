@@ -68,6 +68,20 @@ The service reads two files per language, built once and committed:
 
 The corpus is counted, never embedded, which keeps the image small. Raw corpora live in `corpora/` (git-ignored). Build the assets on Colab with `notebooks/01_build_freq_tables.ipynb` (CPU runtime is enough). It runs `scripts/fetch_corpora.py` (streams OPUS OpenSubtitles and Wikipedia, capped), `scripts/build_assets.py freq`, and `scripts/inspect_freq.py`, which writes a sanity report to `reports/`. Commit only `data/assets/*` and `reports/`.
 
+## Evaluation
+
+Clips go in `data/clips/`, labels in `data/gold/` (step-by-step guide: `data/clips/README.md`).
+
+```bash
+python scripts/labels.py template data/clips/ko_01.txt    # labelling sheet (CSV, no offsets to count)
+python scripts/labels.py convert  data/gold/ko_01.csv     # -> gold JSONL (D6), with checks
+python scripts/score.py detect --split dev                # P/R/F1 for each detector setting
+python scripts/score.py sheet  --split test               # grading sheet: correctness + usefulness
+python scripts/score.py grades reports/grading_test.csv   # summarise the filled-in sheet
+```
+
+A prediction matches a gold span on the same line if their character ranges overlap; matching is one-to-one. Uncertain spans count as detections.
+
 ## Configuration
 
 | Variable | Default | |
@@ -79,8 +93,9 @@ The corpus is counted, never embedded, which keeps the image small. Raw corpora 
 | `EXPLAIN_MODE` | `auto` | `auto`, `live`, `cache`, `offline` |
 | `RETRIEVAL_THRESHOLD` | `0.6` | Below this similarity a span is uncertain |
 | `RETRIEVER` | `auto` | `hybrid` (FAISS + spelling) when the embedding model is present, else `keyword` |
-| `SEMANTIC_FLOOR` | `0.5` | Cosine similarity mapped to 0 in the hybrid score; raise it to make semantic matches stricter |
-| `DETECTOR` | `lexicon` | `lexicon+contrast` adds frequency-contrast flags, filtered by the learner word lists |
+| `SEMANTIC_FLOOR_KO` / `SEMANTIC_FLOOR_ZH` | `0.75` / `0.5` | Cosine similarity mapped to 0 in the hybrid score; higher = stricter semantic matches. Korean is stricter because unrelated short Korean phrases already reach cosine ≈ 0.73 in MiniLM (selftest: related 0.92 vs unrelated 0.73; Mandarin 0.88 vs 0.23). Provisional, to tune on the dev clips |
+| `DETECTOR` | `lexicon` | Signals joined by `+`: `lexicon`, `contrast` (frequency contrast, filtered by the learner word lists), `novelty` (words in no learner list and rare in wordfreq, e.g. 중꺽마, 알잘딱깔센). Example: `lexicon+novelty` |
+| `NOVELTY_MAX_ZIPF_KO` / `_ZH` | `3.0` / `2.5` | A word at or above this wordfreq Zipf frequency is established, not novel |
 | `LEARNER_LEVEL_KO` / `LEARNER_LEVEL_ZH` | `3` / `4` | Contrast candidates known at this level are dropped |
 | `CONTRAST_THRESHOLD` | `2.0` | Contrast score needed to flag a span |
 
@@ -97,14 +112,16 @@ uvicorn app.api:app --reload
 
 ```
 app/        schemas.py · config.py · lexicon.py · vocab.py · detector.py · embed.py · retrieval.py · explain.py · llm.py · pipeline.py · api.py · static/
-data/       lexicon/{ko,zh}.jsonl · wordlists/ · examples/ · cache/ · assets/
-scripts/    fetch_corpora.py · build_assets.py · inspect_freq.py · prepare_wordlists.py · generate_cache.py · smoke.sh
+data/       lexicon/{ko,zh}.jsonl · wordlists/ · examples/ · clips/ · gold/ · cache/ · assets/
+scripts/    fetch_corpora.py · build_assets.py · inspect_freq.py · prepare_wordlists.py · labels.py · score.py · generate_cache.py · smoke.sh
 notebooks/  01_build_freq_tables.ipynb (Colab)
 tests/
 docs/       decision_log.md
 ```
 
 ## Data and attribution
+
+General word frequencies for the novelty signal: wordfreq (Robyn Speer, https://github.com/rspeer/wordfreq), data CC BY-SA 4.0, extracted into `data/wordlists/{lang}_general.tsv`.
 
 Learner word lists: 국립국어원 「한국어 학습용 어휘 목록」 (2003, KOGL Type 1, https://www.korean.go.kr/front_eng/down/down_02V.do?etc_seq=70); HSK 2.0/3.0 vocabulary from github.com/drkameleon/complete-hsk-vocabulary (MIT). Built into `data/wordlists/` by `scripts/prepare_wordlists.py`.
 
