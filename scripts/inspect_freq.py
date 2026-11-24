@@ -20,6 +20,13 @@ sys.path.insert(0, str(ROOT))
 
 from app.detector import ContrastTable, Detector, ngram_keys, segment  # noqa: E402
 from app.lexicon import load_lexicon  # noqa: E402
+from app.vocab import LearnerVocab  # noqa: E402
+
+# Grammatical morphemes (particles, copula, endings) as Kiwi writes them; report-only helper.
+KO_GRAMMAR = {"이", "다", "어", "아", "요", "어요", "아요", "었", "았", "겠", "시", "세요", "으시", "는", "은",
+              "을", "를", "가", "고", "지", "죠", "네", "니", "냐", "야", "라고", "에", "의", "도", "만", "게",
+              "기", "음", "면", "서", "어서", "아서", "니까", "라", "자", "잖아", "거든", "데", "지만", "ᆫ가",
+              "예요", "에요", "습니다", "군요", "나요", "더군요", "잖아요", "님", "께", "께서", "요", "세"}
 
 # Everyday words a learner already knows: these should NOT score high.
 CONTROLS = {
@@ -55,7 +62,10 @@ def main() -> None:
     ap.add_argument("--min-speech", type=int, default=50, help="min speech count for the top list")
     ap.add_argument("--top", type=int, default=40)
     ap.add_argument("--thresholds", default="1,2,3")
+    ap.add_argument("--level", type=int, help="learner level for the filter (default: ko 3, zh 4)")
     a = ap.parse_args()
+    level = a.level or {"ko": 3, "zh": 4}[a.lang]
+    vocab = LearnerVocab.load(ROOT / "data" / "wordlists" / f"{a.lang}_learner.tsv", level)
 
     path = Path(a.table or ROOT / "data" / "assets" / f"{a.lang}_freq.json.gz")
     t = ContrastTable.load(path)
@@ -112,9 +122,44 @@ def main() -> None:
             f"The contrast signal is useful only if the first is clearly higher.")
     say()
 
-    say("## Demo transcripts at different thresholds (contrast-only flags)")
+    if vocab is not None:
+        say(f"## With the learner filter ({vocab.source}, level <= {level}, {len(vocab):,} words)")
+        say()
+
+        def known(key: str) -> bool:
+            # Keys store token forms but not their tags, so the detector's content test is
+            # approximated: drop Korean particles/endings (forms starting with a final-consonant
+            # jamo such as ᆫ/ᆸ니다, or common grammatical morphemes). The live detector uses the
+            # real tags; this only makes the offline report match it closely.
+            forms = key.split()
+            if a.lang != "ko":
+                return vocab.covers(forms)
+            if "".join(forms) in vocab.words:
+                return True
+            grammar = lambda f: ("\u11a8" <= f[0] <= "\u11ff") or f in KO_GRAMMAR  # noqa: E731
+            return (all(f in vocab.words or grammar(f) for f in forms)
+                    and any(f in vocab.words for f in forms))
+
+        pool = sorted((k for k in t.counts if t.counts[k][0] >= a.min_speech), key=lambda k: -scores[k])[:200]
+        removed = sum(known(k) for k in pool)
+        say(f"- of the top 200 contrast phrases, the filter removes **{removed}** as already known")
+        kept_lex = sum(1 for e in lex if not vocab.covers([e.headword]))
+        say(f"- everyday control words removed: **{sum(known(w) or vocab.covers([w]) for w in CONTROLS[a.lang])}"
+            f"/{len(CONTROLS[a.lang])}** · lexicon headwords the list does NOT contain: **{kept_lex}/{len(lex)}**")
+        say()
+        say(f"Top {a.top} after the filter:")
+        say()
+        say("| phrase | score | speech | formal |")
+        say("|---|---|---|---|")
+        survivors = [k for k in sorted((k for k in t.counts if t.counts[k][0] >= a.min_speech),
+                                       key=lambda k: -scores[k]) if not known(k)][: a.top]
+        for k in survivors:
+            say(f"| {k} | {scores[k]:.2f} | {t.counts[k][0]:,} | {t.counts[k][1]:,} |")
+        say()
+
+    say("## Demo transcripts at different thresholds (contrast-only flags" + (", learner filter on)" if vocab else ")"))
     for thr in [float(x) for x in a.thresholds.split(",")]:
-        det = Detector(a.lang, [], t, contrast_threshold=thr)  # type: ignore[arg-type]
+        det = Detector(a.lang, [], t, contrast_threshold=thr, vocab=vocab)  # type: ignore[arg-type]
         say()
         say(f"**threshold {thr}**")
         say()

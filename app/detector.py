@@ -23,6 +23,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .schemas import FlaggedSpan, Lang, LexiconEntry
+from .vocab import LearnerVocab
 
 log = logging.getLogger(__name__)
 
@@ -173,10 +174,12 @@ class Detector:
         lexicon: list[LexiconEntry],
         table: ContrastTable | None = None,
         contrast_threshold: float = 2.0,
+        vocab: LearnerVocab | None = None,
     ):
         self.lang = lang
         self.table = table
         self.contrast_threshold = contrast_threshold
+        self.vocab = vocab  # contrast candidates a learner already knows are dropped
         # Longest forms first so "아니 진짜" is tried before "아니".
         self._forms = sorted(
             ((form, e) for e in lexicon for form in e.forms()), key=lambda x: -len(x[0])
@@ -184,7 +187,9 @@ class Detector:
 
     @property
     def name(self) -> str:
-        return "lexicon+contrast" if self.table else "lexicon"
+        if not self.table:
+            return "lexicon"
+        return "lexicon+contrast" + (f"+learner(L{self.vocab.max_level})" if self.vocab else "")
 
     def detect(self, line: str) -> list[FlaggedSpan]:
         tokens = segment(line, self.lang)
@@ -213,12 +218,19 @@ class Detector:
         if self.table is not None:
             for key, i, j in ngram_keys(tokens, self.lang):
                 s = self.table.score(key)
-                if s is not None and s >= self.contrast_threshold:
-                    a, b = tokens[i].start, tokens[j - 1].end
-                    found.append(
-                        FlaggedSpan(start=a, end=b, surface=line[a:b], score=round(s, 3),
-                                    detected_by=["contrast"])
-                    )
+                if s is None or s < self.contrast_threshold:
+                    continue
+                if self.lang == "zh" and key.replace(" ", "").isascii():
+                    continue  # stray English in Chinese subtitles ("you"), not a learner gap
+                if self.vocab is not None and self.vocab.covers(
+                    [t.form for t in tokens[i:j] if _is_content(t, self.lang)]
+                ):
+                    continue  # conversational, but a learner already knows it
+                a, b = tokens[i].start, tokens[j - 1].end
+                found.append(
+                    FlaggedSpan(start=a, end=b, surface=line[a:b], score=round(s, 3),
+                                detected_by=["contrast"])
+                )
 
         return _resolve_overlaps(found)
 

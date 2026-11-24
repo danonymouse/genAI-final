@@ -79,6 +79,24 @@ def test_stale_table_is_rejected(tmp_path):
     assert ContrastTable.load(p) is None
 
 
+def test_learner_filter_drops_known_candidates():
+    from app.vocab import LearnerVocab
+    table = ContrastTable({"你": [900, 1], "绝绝子": [500, 1], "吃 瓜": [300, 1]}, 10**6, 10**6)
+    vocab = LearnerVocab({"你", "吃", "瓜"}, max_level=4)
+    line = "你就是来吃瓜的，这个锅底真的绝绝子"
+    assert {"绝绝子", "吃", "瓜"} <= {t.form for t in segment(line, "zh")}
+    flagged = {s.surface for s in Detector("zh", [], table, 2.0, vocab).detect(line)}
+    unfiltered = {s.surface for s in Detector("zh", [], table, 2.0).detect(line)}
+    assert "你" in unfiltered and "你" not in flagged  # known word dropped
+    assert "绝绝子" in flagged  # unknown word kept
+    assert "吃瓜" not in flagged  # compositional from known parts: left to the lexicon (documented scope)
+
+
+def test_contrast_is_off_by_default(settings):
+    p = Pipeline(settings)
+    assert settings.detector == "lexicon" and all(c.detector.table is None for c in p.langs.values())
+
+
 # --------------------------------------------------------------------------- stage 3
 def test_dice():
     assert dice("대박이야", "대박이야") == 1.0

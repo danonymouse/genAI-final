@@ -78,6 +78,8 @@ The corpus is counted, never embedded, which keeps the image small. Raw corpora 
 | `LLM_TIMEOUT` | `120` | Seconds per call |
 | `EXPLAIN_MODE` | `auto` | `auto`, `live`, `cache`, `offline` |
 | `RETRIEVAL_THRESHOLD` | `0.6` | Below this similarity a span is uncertain |
+| `DETECTOR` | `lexicon` | `lexicon+contrast` adds frequency-contrast flags, filtered by the learner word lists |
+| `LEARNER_LEVEL_KO` / `LEARNER_LEVEL_ZH` | `3` / `4` | Contrast candidates known at this level are dropped |
 | `CONTRAST_THRESHOLD` | `2.0` | Contrast score needed to flag a span |
 
 ## Develop
@@ -93,14 +95,16 @@ uvicorn app.api:app --reload
 
 ```
 app/        schemas.py · config.py · lexicon.py · detector.py · retrieval.py · explain.py · llm.py · pipeline.py · api.py · static/
-data/       lexicon/{ko,zh}.jsonl · examples/ · cache/ · assets/
-scripts/    fetch_corpora.py · build_assets.py · inspect_freq.py · generate_cache.py · smoke.sh
+data/       lexicon/{ko,zh}.jsonl · wordlists/ · examples/ · cache/ · assets/
+scripts/    fetch_corpora.py · build_assets.py · inspect_freq.py · prepare_wordlists.py · generate_cache.py · smoke.sh
 notebooks/  01_build_freq_tables.ipynb (Colab)
 tests/
 docs/       decision_log.md
 ```
 
 ## Data and attribution
+
+Learner word lists: 국립국어원 「한국어 학습용 어휘 목록」 (2003, KOGL Type 1, https://www.korean.go.kr/front_eng/down/down_02V.do?etc_seq=70); HSK 2.0/3.0 vocabulary from github.com/drkameleon/complete-hsk-vocabulary (MIT). Built into `data/wordlists/` by `scripts/prepare_wordlists.py`.
 
 Subtitle corpus: OPUS OpenSubtitles (http://opus.nlpl.eu/OpenSubtitles.php), from [opensubtitles.org](https://www.opensubtitles.org). The M1 lexicons (20 Korean and 12 Mandarin entries) are hand-written.
 

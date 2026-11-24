@@ -19,7 +19,10 @@ class Settings:
     # auto: live if LLM_BASE_URL is set, else cache, else lexicon. live/cache/offline force one path.
     explain_mode: str
     retrieval_threshold: float  # below this, a span comes back uncertain
-    contrast_threshold: float  # contrast score above this flags a span (only when a table exists)
+    # "lexicon" or "lexicon+contrast". Contrast stays off until the tuning clips show it helps.
+    detector: str
+    contrast_threshold: float  # contrast score needed to flag a span
+    learner_level: dict  # {"ko": 3, "zh": 4}: contrast candidates known at this level are dropped
 
     @property
     def lexicon_dir(self) -> Path:
@@ -32,6 +35,10 @@ class Settings:
     @property
     def cache_dir(self) -> Path:
         return self.data_dir / "cache"
+
+    @property
+    def wordlists_dir(self) -> Path:
+        return self.data_dir / "wordlists"
 
     @property
     def examples_dir(self) -> Path:
@@ -51,5 +58,8 @@ class Settings:
             llm_timeout=float(os.getenv("LLM_TIMEOUT", "120")),
             explain_mode=os.getenv("EXPLAIN_MODE", "auto").lower(),
             retrieval_threshold=float(os.getenv("RETRIEVAL_THRESHOLD", "0.6")),
+            detector=os.getenv("DETECTOR", "lexicon").lower(),
             contrast_threshold=float(os.getenv("CONTRAST_THRESHOLD", "2.0")),
+            learner_level={"ko": int(os.getenv("LEARNER_LEVEL_KO", "3")),
+                           "zh": int(os.getenv("LEARNER_LEVEL_ZH", "4"))},
         )

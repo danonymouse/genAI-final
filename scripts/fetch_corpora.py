@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import zlib
@@ -199,4 +200,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    # `datasets` streaming can leave a background download thread retrying forever after we
+    # stop reading early, which keeps the process alive. The output is already written.
+    os._exit(0)

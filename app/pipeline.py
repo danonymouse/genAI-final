@@ -8,6 +8,7 @@ from .detector import ContrastTable, Detector
 from .explain import Explainer, SpanJob
 from .llm import OpenAICompatClient
 from .lexicon import load_lexicon
+from .vocab import LearnerVocab
 from .retrieval import KeywordRetriever, Retriever
 from .schemas import AnalyzedLine, AnalyzedSpan, AnalyzeResponse, Lang, LexiconEntry, Meta
 
@@ -31,10 +32,13 @@ class Pipeline:
                if s.live_enabled and s.llm_base_url else None)
         for lang in LANGS:
             lex = load_lexicon(s.lexicon_dir / f"{lang}.jsonl")
-            table = ContrastTable.load(s.assets_dir / f"{lang}_freq.json.gz")
+            table = vocab = None
+            if s.detector == "lexicon+contrast":
+                table = ContrastTable.load(s.assets_dir / f"{lang}_freq.json.gz")
+                vocab = LearnerVocab.load(s.wordlists_dir / f"{lang}_learner.tsv", s.learner_level[lang])
             self.langs[lang] = LangComponents(
                 lexicon=lex,
-                detector=Detector(lang, lex, table, s.contrast_threshold),
+                detector=Detector(lang, lex, table, s.contrast_threshold, vocab),
                 retriever=KeywordRetriever(lex),
                 explainer=Explainer(
                     lang=lang,
