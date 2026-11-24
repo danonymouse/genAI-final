@@ -7,3 +7,7 @@ __pycache__/
 corpora/
 *.ipynb_checkpoints
 .DS_Store
+# embedding model (downloaded by `python -m app.embed download`) and indexes built from it
+models/
+data/assets/*_index.faiss
+data/assets/*_index.json

@@ -4,17 +4,26 @@ FROM --platform=linux/amd64 python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    EMBED_MODEL_DIR=/srv/models/minilm
 
 WORKDIR /srv
 
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
-# Assets are pre-built and committed (data/assets, data/cache): nothing is downloaded
-# at build time beyond pip packages, and nothing at all at run time.
+# Embedding model: downloaded once here (its own layer, so code changes don't re-download it),
+# then checked: related phrases must embed closer than unrelated ones, or the build fails.
+# Nothing is downloaded at run time.
+COPY app/__init__.py app/embed.py app/
+RUN python -m app.embed download && python -m app.embed selftest
+
+# Everything else is pre-built and committed (frequency tables, word lists, cache).
 COPY app/ app/
 COPY data/ data/
+
+# Build the FAISS index of the lexicon now, so the first request doesn't pay for it.
+RUN python -m app.retrieval
 
 # Load both segmenters once so jieba's dictionary cache is baked into the image.
 RUN python -c "from app.detector import warmup; warmup()"

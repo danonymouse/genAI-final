@@ -50,6 +50,7 @@ def health():
     return {
         "status": "ok",
         "explain_mode": s.explain_mode,
+        "warnings": p.warnings,
         "live_llm": s.live_enabled,
         "llm_model": s.llm_model if s.live_enabled else None,
         "languages": {

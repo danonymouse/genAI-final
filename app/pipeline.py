@@ -9,7 +9,7 @@ from .explain import Explainer, SpanJob
 from .llm import OpenAICompatClient
 from .lexicon import load_lexicon
 from .vocab import LearnerVocab
-from .retrieval import KeywordRetriever, Retriever
+from .retrieval import HybridRetriever, KeywordRetriever, Retriever
 from .schemas import AnalyzedLine, AnalyzedSpan, AnalyzeResponse, Lang, LexiconEntry, Meta
 
 LANGS: tuple[Lang, ...] = ("ko", "zh")
@@ -25,11 +25,13 @@ class LangComponents:
 
 
 class Pipeline:
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, embedder=None):
         self.settings = s = settings or Settings.from_env()
         self.langs: dict[Lang, LangComponents] = {}
         llm = (OpenAICompatClient(s.llm_base_url, s.llm_model, s.llm_api_key, s.llm_timeout)
                if s.live_enabled and s.llm_base_url else None)
+        self.warnings: list[str] = []
+        embedder = self._embedder(s) if embedder is None else embedder
         for lang in LANGS:
             lex = load_lexicon(s.lexicon_dir / f"{lang}.jsonl")
             table = vocab = None
@@ -39,7 +41,9 @@ class Pipeline:
             self.langs[lang] = LangComponents(
                 lexicon=lex,
                 detector=Detector(lang, lex, table, s.contrast_threshold, vocab),
-                retriever=KeywordRetriever(lex),
+                retriever=(HybridRetriever(lex, embedder, s.assets_dir / f"{lang}_index",
+                                           s.lexicon_dir / f"{lang}.jsonl", s.semantic_floor[lang])
+                           if embedder is not None else KeywordRetriever(lex)),
                 explainer=Explainer(
                     lang=lang,
                     cache_path=s.cache_dir / f"{lang}.json",
@@ -47,6 +51,19 @@ class Pipeline:
                     use_cache=s.explain_mode in ("auto", "cache"),
                 ),
             )
+
+    def _embedder(self, s: Settings):
+        if s.retriever == "keyword":
+            return None
+        from .embed import Embedder, model_available
+
+        if not model_available():
+            msg = "embedding model not found; using keyword retrieval (run: python -m app.embed download)"
+            if s.retriever == "hybrid":
+                raise RuntimeError(msg)
+            self.warnings.append(msg)
+            return None
+        return Embedder()
 
     def analyze(self, lang: Lang, lines: list[str]) -> AnalyzeResponse:
         c = self.langs[lang]
@@ -110,6 +127,6 @@ class Pipeline:
                 retrieval_threshold=thr,
                 n_flagged=len(all_spans),
                 n_uncertain=sum(s.status == "uncertain" for s in all_spans),
-                warnings=list(c.explainer.warnings),
+                warnings=list(c.explainer.warnings) + self.warnings,
             ),
         )

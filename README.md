@@ -51,7 +51,7 @@ Each span in the response:
 |---|---|---|
 | 1 Split | `app/detector.py` | Segments the line (kiwipiepy for Korean, jieba for Mandarin) into candidate n-grams with character offsets |
 | 2 Score | `app/detector.py` | Flags spans that match a lexicon form, or whose **contrast score** `log((f_speech+1)/(f_formal+1))` (per million tokens) exceeds `CONTRAST_THRESHOLD` |
-| 3 Retrieve | `app/retrieval.py` | Finds the lexicon entries closest to the span. Below `RETRIEVAL_THRESHOLD` → **uncertain**, no LLM call |
+| 3 Retrieve | `app/retrieval.py`, `app/embed.py` | Finds the lexicon entries closest to the span: FAISS over multilingual MiniLM embeddings (ONNX, no PyTorch), combined with spelling overlap. Below `RETRIEVAL_THRESHOLD` → **uncertain**, no LLM call |
 | 4 Explain | `app/explain.py`, `app/llm.py` | An open LLM (Qwen3.5-9B by default, any OpenAI-compatible server) explains the span from the retrieved entries as JSON, one call per line. It can also reject the entries as not fitting the context → uncertain |
 | 5 Show | `app/static/index.html` | Highlights plus expandable cards |
 
@@ -64,7 +64,7 @@ Explanation sources, in order (`EXPLAIN_MODE=auto`): **live** LLM if `LLM_BASE_U
 The service reads two files per language, built once and committed:
 
 - `data/assets/{lang}_freq.json.gz`: n-gram → (speech count, formal count). Built by `scripts/build_assets.py freq` from a subtitle corpus and a formal corpus. The detector switches the contrast signal on automatically when this file exists.
-- `data/assets/{lang}_index.faiss`: embedding index of the lexicon (M2).
+- `data/assets/{lang}_index.faiss`: FAISS index of every lexicon surface form, embedded with `paraphrase-multilingual-MiniLM-L12-v2` (quantized ONNX export from the model's own repo). Built during `docker build` and rebuilt automatically whenever the lexicon changes; not committed. The Docker build downloads the model once and runs `python -m app.embed selftest`; nothing is downloaded at run time. Locally, `python -m app.embed download` fetches it into `models/`; without it the service falls back to keyword retrieval and says so in `/health`.
 
 The corpus is counted, never embedded, which keeps the image small. Raw corpora live in `corpora/` (git-ignored). Build the assets on Colab with `notebooks/01_build_freq_tables.ipynb` (CPU runtime is enough). It runs `scripts/fetch_corpora.py` (streams OPUS OpenSubtitles and Wikipedia, capped), `scripts/build_assets.py freq`, and `scripts/inspect_freq.py`, which writes a sanity report to `reports/`. Commit only `data/assets/*` and `reports/`.
 
@@ -78,6 +78,8 @@ The corpus is counted, never embedded, which keeps the image small. Raw corpora 
 | `LLM_TIMEOUT` | `120` | Seconds per call |
 | `EXPLAIN_MODE` | `auto` | `auto`, `live`, `cache`, `offline` |
 | `RETRIEVAL_THRESHOLD` | `0.6` | Below this similarity a span is uncertain |
+| `RETRIEVER` | `auto` | `hybrid` (FAISS + spelling) when the embedding model is present, else `keyword` |
+| `SEMANTIC_FLOOR` | `0.5` | Cosine similarity mapped to 0 in the hybrid score; raise it to make semantic matches stricter |
 | `DETECTOR` | `lexicon` | `lexicon+contrast` adds frequency-contrast flags, filtered by the learner word lists |
 | `LEARNER_LEVEL_KO` / `LEARNER_LEVEL_ZH` | `3` / `4` | Contrast candidates known at this level are dropped |
 | `CONTRAST_THRESHOLD` | `2.0` | Contrast score needed to flag a span |
@@ -94,7 +96,7 @@ uvicorn app.api:app --reload
 ## Layout
 
 ```
-app/        schemas.py · config.py · lexicon.py · detector.py · retrieval.py · explain.py · llm.py · pipeline.py · api.py · static/
+app/        schemas.py · config.py · lexicon.py · vocab.py · detector.py · embed.py · retrieval.py · explain.py · llm.py · pipeline.py · api.py · static/
 data/       lexicon/{ko,zh}.jsonl · wordlists/ · examples/ · cache/ · assets/
 scripts/    fetch_corpora.py · build_assets.py · inspect_freq.py · prepare_wordlists.py · generate_cache.py · smoke.sh
 notebooks/  01_build_freq_tables.ipynb (Colab)
@@ -110,4 +112,4 @@ Subtitle corpus: OPUS OpenSubtitles (http://opus.nlpl.eu/OpenSubtitles.php), fro
 
 ## Status
 
-M1 is complete. Both languages run end to end through the lexicon detector, the keyword retriever and the three-source explainer (live open LLM → cache → lexicon). M2 adds the real frequency tables, the FAISS retriever with ONNX embeddings, the full lexicons and the evaluation script. Key decisions are in `docs/decision_log.md`.
+M2 is complete: real frequency tables for both languages, the learner-vocabulary filter, FAISS retrieval over ONNX MiniLM embeddings, both languages through one code path, and the uncertain rule firing (e.g. 케이크 flagged by the contrast signal, no lexicon match, returned uncertain). The contrast signal is off by default until the tuning clips show it helps. Next: labelled clips, the explanation cache from Qwen on Colab, and `score.py`. Key decisions are in `docs/decision_log.md`.

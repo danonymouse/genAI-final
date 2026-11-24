@@ -12,6 +12,7 @@ from app.lexicon import load_lexicon
 from app.llm import LLMError, OpenAICompatClient, extract_json
 from app.pipeline import Pipeline
 from app.retrieval import dice
+from app.schemas import FlaggedSpan
 
 
 @pytest.fixture(scope="module")
@@ -260,3 +261,76 @@ def test_api_rejects_bad_input(client):
 def test_web_page(client):
     r = client.get("/")
     assert r.status_code == 200 and "Pragmatic Gap Detector" in r.text
+
+
+# --------------------------------------------------------------------------- hybrid retrieval (FAISS)
+class CharGramEmbedder:
+    """Deterministic stand-in for MiniLM: hashed character 1-2 grams, L2-normalised."""
+    dim = 384
+    name = "chargram-test"
+
+    def __init__(self):
+        self.calls = 0
+
+    def encode(self, texts):
+        import numpy as np
+        self.calls += 1
+        out = np.zeros((len(texts), self.dim), dtype=np.float32)
+        for r, t in enumerate(texts):
+            t = "".join(t.split())
+            for g in list(t) + [t[i:i + 2] for i in range(len(t) - 1)]:
+                out[r, hash(g) % self.dim] += 1.0
+        out /= np.clip(np.linalg.norm(out, axis=1, keepdims=True), 1e-12, None)
+        return out
+
+
+def _span(surface):
+    return FlaggedSpan(start=0, end=len(surface), surface=surface, score=1.0)
+
+
+def test_hybrid_exact_match_scores_one_and_ranks_first(ko_lex):
+    from app.retrieval import HybridRetriever
+    r = HybridRetriever(ko_lex, CharGramEmbedder())
+    top = r.search(_span("대박이야"), "", k=3)
+    assert top[0][1].headword == "대박" and top[0][0].similarity == 1.0
+    assert r.index.ntotal == sum(len(e.forms()) for e in ko_lex)
+
+
+def test_hybrid_semantic_catches_unlisted_variant(ko_lex):
+    from app.retrieval import HybridRetriever, KeywordRetriever
+    span = _span("존맛탱구리")  # an unlisted, playful extension of 존맛탱
+    kw = KeywordRetriever(ko_lex).search(span, "", k=1)[0][0].similarity
+    hy = HybridRetriever(ko_lex, CharGramEmbedder(), floor=0.3).search(span, "", k=1)[0]
+    assert hy[1].headword == "존맛" and hy[0].similarity >= kw
+
+
+def test_hybrid_unrelated_stays_below_threshold(ko_lex):
+    from app.retrieval import HybridRetriever
+    top = HybridRetriever(ko_lex, CharGramEmbedder()).search(_span("蜘蛛侠"), "", k=1)
+    assert not top or top[0][0].similarity < 0.6
+
+
+def test_hybrid_index_cache_is_reused_and_invalidated(ko_lex, tmp_path, settings):
+    from app.retrieval import HybridRetriever
+    lex_file = settings.lexicon_dir / "ko.jsonl"
+    stem = tmp_path / "ko_index"
+    emb = CharGramEmbedder()
+    HybridRetriever(ko_lex, emb, stem, lex_file)
+    assert stem.with_suffix(".faiss").exists() and emb.calls == 1
+    HybridRetriever(ko_lex, emb, stem, lex_file)  # same lexicon + model -> loaded, not re-encoded
+    assert emb.calls == 1
+    changed = tmp_path / "ko.jsonl"
+    changed.write_bytes(lex_file.read_bytes() + b"\n")
+    HybridRetriever(ko_lex, emb, stem, changed)  # lexicon file changed -> rebuilt
+    assert emb.calls == 2
+
+
+def test_pipeline_with_hybrid_retriever(settings, tmp_path):
+    import dataclasses
+    s = dataclasses.replace(settings, data_dir=tmp_path)
+    import shutil
+    shutil.copytree(settings.lexicon_dir, tmp_path / "lexicon")
+    p = Pipeline(s, embedder=CharGramEmbedder())
+    r = p.analyze("ko", ["아니 진짜 여기 분위기 대박이야."])
+    assert r.meta.retriever == "hybrid" and [x.status for x in r.lines[0].spans] == ["explained", "explained"]
+    assert (tmp_path / "assets" / "ko_index.faiss").exists()

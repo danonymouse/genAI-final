@@ -23,7 +23,8 @@ class Settings:
     detector: str
     contrast_threshold: float  # contrast score needed to flag a span
     learner_level: dict  # {"ko": 3, "zh": 4}: contrast candidates known at this level are dropped
-
+    retriever: str  # "auto" (hybrid if the embedding model is present, else keyword), "hybrid", "keyword"
+    semantic_floor: dict  # per language: cosine mapped to similarity 0 in the hybrid retriever
     @property
     def lexicon_dir(self) -> Path:
         return self.data_dir / "lexicon"
@@ -62,4 +63,6 @@ class Settings:
             contrast_threshold=float(os.getenv("CONTRAST_THRESHOLD", "2.0")),
             learner_level={"ko": int(os.getenv("LEARNER_LEVEL_KO", "3")),
                            "zh": int(os.getenv("LEARNER_LEVEL_ZH", "4"))},
-        )
+            retriever=os.getenv("RETRIEVER", "auto").lower(),
+            semantic_floor={"ko": float(os.getenv("SEMANTIC_FLOOR_KO", "0.75")),
+                            "zh": float(os.getenv("SEMANTIC_FLOOR_ZH", "0.5"))},        )
